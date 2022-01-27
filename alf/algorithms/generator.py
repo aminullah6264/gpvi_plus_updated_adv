@@ -303,6 +303,7 @@ class Generator(Algorithm):
                  functional_gradient=False,
                  init_lambda=1.,
                  lambda_trainable=False,
+                 extra_noise_std=0.001,
                  block_inverse_mvp=False,
                  direct_jac_inverse=False,
                  inverse_mvp_solve_iters=1,
@@ -453,6 +454,7 @@ class Generator(Algorithm):
                 else:
                     assert noise_dim < output_dim
                     force_fullrank = True
+                    self._extra_noise_std = extra_noise_std
                 self._grad_func = self._rkhs_func_grad
                 self._force_fullrank = force_fullrank
                 init_lambda = float(init_lambda)
@@ -569,12 +571,17 @@ class Generator(Algorithm):
             if self._functional_gradient:
                 if self._force_fullrank:
                     fullrank_diag_weight = self.get_lambda(training=training)
-                    extra_noise = torch.randn(
+                    extra_noise = self._extra_noise_std * torch.randn(
                         noise.shape[0], self._output_dim - self._noise_dim)
                     outputs = self._net(gen_inputs)[0]  # [B, D]
+                    noise_outputs = torch.cat(
+                        (torch.zeros_like(gen_inputs),
+                         fullrank_diag_weight * extra_noise),
+                        dim=-1)  # [B, D]
                     gen_inputs = torch.cat((gen_inputs, extra_noise),
                                            dim=-1)  # [B, D]
-                    outputs = outputs + fullrank_diag_weight * gen_inputs
+                    # outputs = outputs + fullrank_diag_weight * gen_inputs
+                    outputs = outputs + noise_outputs
                 else:
                     outputs = self._net(gen_inputs)[0]
             else:
@@ -1097,7 +1104,7 @@ class Generator(Algorithm):
                                 self._output_dim - self._noise_dim)
                 ],
                                   dim=-1)
-            jac_y += self.get_lambda() * y  # [N2*N, D]
+            # jac_y += self.get_lambda() * y  # [N2*N, D]
         loss = torch.nn.functional.mse_loss(jac_y, vec.detach())
 
         return loss
