@@ -1104,7 +1104,11 @@ class Generator(Algorithm):
                                 self._output_dim - self._noise_dim)
                 ],
                                   dim=-1)
-            # jac_y += self.get_lambda() * y  # [N2*N, D]
+                y_lower = y[:, self._noise_dim:]
+                y_lower = torch.cat(
+                    [torch.zeros(y.shape[0], self._noise_dim), y_lower],
+                    dim=-1)
+                jac_y += self.get_lambda() * y_lower  # [N2*N, D]
         loss = torch.nn.functional.mse_loss(jac_y, vec.detach())
 
         return loss
@@ -1210,17 +1214,20 @@ class Generator(Algorithm):
         jac = self._net.compute_jac(z, output_partial_idx=partial_idx)
 
         if self._force_fullrank:
-            if self._block_inverse_mvp:
-                eye_dim = self._noise_dim
-            else:
-                eye_dim = self._output_dim
+            if not self._block_inverse_mvp:
+                # eye_dim = self._noise_dim
+                # else:
+                diag_vec = torch.cat([
+                    torch.zeros(self._noise_dim),
+                    torch.ones(self._output_dim - self._noise_dim)
+                ])
                 jac = torch.cat([
                     jac,
                     torch.zeros(*jac.shape[:-1],
                                 self._output_dim - self._noise_dim)
                 ],
                                 dim=-1)
-            jac += fullrank_diag_weight * torch.eye(eye_dim)
+                jac += fullrank_diag_weight * torch.diag(diag_vec)
         jac_inv = torch.inverse(jac)  # [N2, D, D] or [N2, K, K]
 
         if self._force_fullrank and self._block_inverse_mvp:

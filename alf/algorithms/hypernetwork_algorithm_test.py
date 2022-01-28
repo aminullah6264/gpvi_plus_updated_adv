@@ -194,9 +194,12 @@ class HyperNetworkTest(parameterized.TestCase, alf.test.TestCase):
         self.assertLess(mean_err, 0.5)
         self.assertLess(cov_err, 0.5)
 
-    @parameterized.parameters((True), (False, False), (False, True))
+    # @parameterized.parameters((True), (False, False), (False, True))
+    @parameterized.parameters((True), (False, False, False, 48), (False, True),
+                              (True, False, True), (True, True))
     def test_gpvi_bayesian_linear_regression(self,
                                              direct_jac_inverse=False,
+                                             block_inverse_mvp=False,
                                              lambda_trainable=False,
                                              num_particles=32):
         r"""
@@ -252,7 +255,7 @@ class HyperNetworkTest(parameterized.TestCase, alf.test.TestCase):
             functional_gradient=functional_gradient,
             init_lambda=1.,
             lambda_trainable=lambda_trainable,
-            block_inverse_mvp=True,
+            block_inverse_mvp=block_inverse_mvp,
             direct_jac_inverse=direct_jac_inverse,
             critic_hidden_layers=(hidden_size, hidden_size),
             inverse_mvp_hidden_layers=3,
