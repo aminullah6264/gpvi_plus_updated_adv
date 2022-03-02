@@ -32,7 +32,7 @@ from alf.utils import common
 from alf.utils.math_ops import identity
 from alf.utils.tensor_utils import BatchSquash
 from .norm_layers import BatchNorm1d, BatchNorm2d, prepare_rnn_batch_norm
-from .norm_layers import ParamBatchNorm1d, ParamBatchNorm2d
+from .norm_layers import ParamBatchNorm1d, ParamBatchNorm2d, ParamEvoNorm2d
 from .norm_layers import ParamLayerNorm1d, ParamLayerNorm2d
 
 
@@ -2070,11 +2070,14 @@ class ParamConv2D(nn.Module):
                 self._norm = ParamBatchNorm2d(out_channels, n_groups)
             elif use_norm == 'ln':
                 self._norm = ParamLayerNorm2d(n_groups, out_channels)
+            elif use_norm == 'en':
+                self._norm = ParamEvoNorm2d(in_channels, n_groups)
             else:
-                raise ValueError("Only bn and ln are supported for use_norm")
+                raise ValueError("Only bn, ln, en norm are supported for use_norm")
             self._n_groups = n_groups
         else:
             n_groups = 1
+        
         self._param_length = None
         self.set_parameters(torch.randn(n_groups, self.param_length))
 
@@ -2253,6 +2256,10 @@ class ParamConv2D(nn.Module):
             else:
                 raise ValueError("Wrong img.ndim=%d" % img.ndim)
 
+
+        if self._use_norm is not None and self._use_norm == 'en':
+            img = self._norm(img, keep_group_dim=False)
+
         res = F.conv2d(
             img,
             self._weight,
@@ -2260,9 +2267,18 @@ class ParamConv2D(nn.Module):
             stride=self._strides,
             padding=self._padding,
             groups=self._n_groups)
-        if self._use_norm is not None:
+
+        
+        if self._use_norm is not None and self._use_norm != 'en':
             res = self._norm(res, keep_group_dim=False)
-        res = self._activation(res)
+               
+        # if self._use_norm is not None and self._use_norm == 'en':
+        #     res = self._norm(res, keep_group_dim=False)
+
+        
+        if self._use_norm != 'en':
+            res = self._activation(res)
+
 
         if self._pooling_kernel is not None:
             res = F.max_pool2d(res, self._pooling_kernel)

@@ -13,6 +13,7 @@
 # limitations under the License.
 """HyperNetwork algorithm."""
 
+from tkinter.tix import Tree
 from absl import logging
 import functools
 import math
@@ -32,7 +33,11 @@ from alf.utils import common, math_ops, summary_utils
 from alf.utils.summary_utils import record_time
 from alf.utils.sl_utils import classification_loss, regression_loss, auc_score
 from alf.utils.sl_utils import predict_dataset
-
+# Amin's edits
+from alf.torchattacks import PGD, PGDL2, FGSM, DeepFool, MultiAttack, MIFGSM, RFGSM
+# from alf.networks.holdout_models import holdoutMNISTModel, holdoutFMNISTModel, holdoutCifarModel
+alf.set_default_device('cuda')
+import os
 
 @alf.configurable
 class HyperNetwork(Algorithm):
@@ -100,14 +105,27 @@ class HyperNetwork(Algorithm):
                  par_vi="svgd",
                  num_train_classes=10,
                  critic_optimizer=None,
-                 inverse_mvp_optimizer=None,
-                 optimizer=None,
-                 lambda_optimizer=None,
+                #  inverse_mvp_optimizer=None,
+                #  optimizer=None,
+                #  lambda_optimizer=None,
+                 optimizer_lr = 1e-4,
+                 optimizer_wd= 1e-4,
+                 inverse_mvp_optimizer_lr= 1e-4,
+                 lambda_optimizer_lr = 1e-4,
+
                  logging_network=False,
                  logging_training=False,
                  logging_evaluate=False,
                  config: TrainerConfig = None,
-                 name="HyperNetwork"):
+                 name="HyperNetwork",
+                 attack = "PGD",
+                 eps = 0.031, 
+                 eps_alpha = 0.007, 
+                 steps=7,
+                 attackNorm = "Linf",
+                 dataset="cifar10",
+                 attacktype = 'WhiteBox',
+                 comment = 'Saved_Model'):
         """
         Args:
             data_creator (Callable): called as ``data_creator()`` to get a tuple
@@ -210,6 +228,12 @@ class HyperNetwork(Algorithm):
             config (TrainerConfig): configuration for training
             name (str):
         """
+
+        optimizer=alf.optimizers.Adam(lr=optimizer_lr,weight_decay=optimizer_wd, clip_by_global_norm=True)
+        inverse_mvp_optimizer=alf.optimizers.Adam(lr=inverse_mvp_optimizer_lr, clip_by_global_norm=True)
+        lambda_optimizer=alf.optimizers.Adam(lr=lambda_optimizer_lr, clip_by_global_norm=True)
+
+
         super().__init__(optimizer=optimizer, name=name)
         self._entropy_regularization = entropy_regularization
         if data_creator is not None:
@@ -326,6 +350,87 @@ class HyperNetwork(Algorithm):
             name=name)
 
         self._param_net = param_net
+
+
+
+        # import ipdb; ipdb.set_trace()
+
+         # Amin's edits
+        self.use_conv_norm = use_conv_norm
+        self.best_acc = 0
+        self.counter = 0
+        self.attack = attack
+        self.eps = eps
+        self.eps_alpha = eps_alpha
+        self.steps = steps
+        self.attackNorm = attackNorm
+        self.dataset = dataset
+        self.attacktype = attacktype
+        self.comment = comment
+
+       
+
+        if self.attackNorm == 'Linf':
+            if self.attack == 'PGD':
+                if self.attacktype == 'WhiteBox':
+                    self.attackk = PGD(self._param_net, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, ensemble=True, num_ensembles = num_particles)
+                else:
+                    self.holdoutModel = holdoutCifarModel()
+                    state_dict = torch.load('./holdoutModelsWeights/Holdout_Model_cifar10_PGD_0.0156_0.00156_steps_20_.pt')
+                    self.holdoutModel.load_state_dict(state_dict)
+                    self.attackk = PGD(self.holdoutModel, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, ensemble=False, num_ensembles = num_particles)
+
+            if self.attack == 'FGSM':
+                if self.attacktype == 'WhiteBox':
+                    self.attackk = FGSM(self._param_net, eps= self.eps, ensemble=True, num_ensembles = num_particles)
+                else:
+                    self.holdoutModel = holdoutCifarModel()
+                    state_dict = torch.load('./holdoutModelsWeights/Holdout_Model_cifar10_FGSM_0.0156_0.00156_steps_20_.pt')
+                    self.holdoutModel.load_state_dict(state_dict)
+                    self.attackk = FGSM(self.holdoutModel, eps= self.eps, ensemble=False, num_ensembles = num_particles)
+
+            if self.attack == 'IFGSM': # when random_start is false PGD works as IFGSM
+                if self.attacktype == 'WhiteBox':
+                    self.attackk = PGD(self._param_net, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, random_start= False, ensemble=True, num_ensembles = num_particles)
+                else:
+                    self.holdoutModel = holdoutCifarModel()
+                    state_dict = torch.load('./holdoutModelsWeights/Holdout_Model_cifar10_PGD_0.0156_0.00156_steps_20_.pt')
+                    self.holdoutModel.load_state_dict(state_dict)
+                    self.attackk = PGD(self.holdoutModel, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, random_start= False, ensemble=False, num_ensembles = num_particles)
+            
+            if self.attack == 'MIFGSM': # when random_start is false PGD works as IFGSM
+                if self.attacktype == 'WhiteBox':
+                    self.attackk = MIFGSM(self._param_net, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, ensemble=True, num_ensembles = num_particles)
+                else:
+                    self.holdoutModel = holdoutCifarModel()
+                    state_dict = torch.load('./holdoutModelsWeights/Holdout_Model_cifar10_MIFGSM_0.0156_0.00156_steps_20_.pt')
+                    self.holdoutModel.load_state_dict(state_dict)
+                    self.attackk = MIFGSM(self.holdoutModel, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, ensemble=False, num_ensembles = num_particles)
+            
+            if self.attack == 'RFGSM': # when random_start is false PGD works as IFGSM
+                if self.attacktype == 'WhiteBox':
+                    self.attackk = RFGSM(self._param_net, eps= self.eps, alpha= self.eps_alpha, ensemble=True, num_ensembles = num_particles)
+                else:
+                    self.holdoutModel = holdoutCifarModel()
+                    state_dict = torch.load('./holdoutModelsWeights/Holdout_Model_cifar10_RFGSM_0.0156_0.00156_steps_20_.pt')
+                    self.holdoutModel.load_state_dict(state_dict)
+                    self.attackk = RFGSM(self.holdoutModel, eps= self.eps, alpha= self.eps_alpha, ensemble=False)
+                            
+                
+
+        if self.attackNorm == 'L2':
+            if self.attack == 'PGD':
+                self.attackk = PGDL2(self._param_net, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, ensemble=True, num_ensembles = num_particles)
+
+            if self.attack == 'FGSM': # when eps and alpha are equal, steps = 1, and eps_for_division=1e-10 PGDL2 works as FGSML2
+                self.attackk = PGDL2(self._param_net, eps= self.eps, alpha= self.eps, steps = 1, eps_for_division=1e-10, ensemble=True, num_ensembles = num_particles)
+            
+            if self.attack == 'IFGSM':
+                self.attackk = PGDL2(self._param_net, eps= self.eps, alpha= self.eps_alpha, steps = self.steps, random_start= False, ensemble=True, num_ensembles = num_particles)
+
+
+        # self.attackk.set_training_mode(model_training= True, batchnorm_training= True)
+
         self._num_particles = num_particles
         self._generator_use_fc_bn = generator_use_fc_bn
         self._loss_type = loss_type
@@ -428,6 +533,30 @@ class HyperNetwork(Algorithm):
         self._param_net.set_parameters(params)
         outputs, _ = self._param_net(inputs)
         return AlgStep(output=outputs, state=(), info=())
+    # Amin's edits
+    def save_generator_weights(self):
+        state_dict = self._generator._net.state_dict()
+        name_dir = './Normalize0_1%255/' + self.attacktype + '_' + self.dataset + '_' + self.attack + '_' + self.attackNorm + '_' + str(self.eps) + '_' + str(self.eps_alpha) + '_' + str(self.steps)+ '_' + self.comment + '_'
+        # name_dir = './Normalize0_1%255/' + self.comment + '_'
+
+
+        if self._functional_gradient is not None:
+            name_dir = name_dir + 'GPVI+'
+        else:
+            name_dir = name_dir + 'par_vi'
+        os.makedirs(name_dir, exist_ok=True)
+
+        mean_ = []
+        var_ = []
+        # if self.use_conv_norm == 'bn':
+        #     for conv in self._param_net._conv_net._conv_layers:
+        #         mean_.append(conv._norm.running_mean)
+        #         var_.append(conv._norm.running_var)
+            
+        state_dict.update((('layers_mean', mean_), ('layers_var', var_)))
+
+        print('Saving Model............', name_dir, ' at Acc = ', self.best_acc)
+        torch.save(state_dict, name_dir+'/generator.pt')
 
     def train_iter(self, num_particles=None, state=None):
         """Perform one epoch (iteration) of training.
@@ -450,7 +579,10 @@ class HyperNetwork(Algorithm):
                 inverse_mvp_loss = None
             if self._loss_type == 'classification':
                 avg_acc = []
+            
+
             for batch_idx, (data, target) in enumerate(self._train_loader):
+                
                 data = data.to(alf.get_default_device())
                 target = target.to(alf.get_default_device())
                 alg_step = self.train_step((data, target),
@@ -593,8 +725,26 @@ class HyperNetwork(Algorithm):
             negative log_prob for params evaluated on current training batch.
         """
         self._param_net.set_parameters(params)
+        
+        
         num_particles = params.shape[0]
         data, target = inputs
+
+        # import ipdb; ipdb.set_trace()
+
+         # Amin's edits     
+        
+
+        Adv_data = self.attackk(data, target).to(alf.get_default_device())
+
+        data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
+        target = torch.cat((target, target),0).to(alf.get_default_device())
+
+        shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
+        shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
+        data = data[shuffle_idx]
+        target = target[shuffle_idx]
+
         output, _ = self._param_net(data)  # [B, P, D]
         target = target.unsqueeze(1).expand(*target.shape[:1], num_particles,
                                             *target.shape[1:])
@@ -616,27 +766,97 @@ class HyperNetwork(Algorithm):
         self._param_net.set_parameters(params)
         if self._generator_use_fc_bn:
             self._generator.train()
+        
+        
+        # for name, param in self._param_net._conv_net.named_buffers():
+        #     if 'mean' in name:
+        #         param.data = torch.abs(param.data * 0)
+        #     elif 'var' in name:
+        #         param.data = torch.abs(param.data * 0 + 1)
+        #     else:
+        #         param.data = param.data * 0
+
+            
+
+        # if self.use_conv_norm == 'bn':
+        #     for batch_idx, (data, target) in enumerate(self._train_loader):
+        #         data = data.to(alf.get_default_device())
+        #         target = target.to(alf.get_default_device())
+        #         # Adv_data = self.attackk(data, target).to(alf.get_default_device())
+
+        #         # data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
+        #         # target = torch.cat((target, target),0).to(alf.get_default_device())
+
+        #         # shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
+        #         # shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
+        #         # data = data[shuffle_idx]
+        #         # target = target[shuffle_idx]
+                
+        #         output, _ = self._param_net(data)   
+
+        #         if batch_idx ==20:
+        #             break 
+
+        # self.attackk.set_training_mode(model_training= False, batchnorm_training= False)
+
+        self._param_net.eval()
+        # with torch.no_grad():
         with record_time("time/test"):
             if self._loss_type == 'classification':
                 test_acc = 0.
             test_loss = 0.
+            preds_tensor, targets_tensor = [], []
             for i, (data, target) in enumerate(self._test_loader):
                 data = data.to(alf.get_default_device())
                 target = target.to(alf.get_default_device())
-                output, _ = self._param_net(data)  # [B, N, D]
-                loss, extra = self._vote(output, target)
-                if self._loss_type == 'classification':
-                    test_acc += extra.item()
-                test_loss += loss.loss.item()
+                # with torch.no_grad():
+                #     output, _ = self._param_net(data)  # [B, N, D]
+                Adv_data = self.attackk(data, target).to(alf.get_default_device())
 
-        if self._loss_type == 'classification':
-            test_acc /= len(self._test_loader.dataset)
-            alf.summary.scalar(name='eval/test_acc', data=test_acc * 100)
+                with torch.no_grad():
+                    output, _ = self._param_net(Adv_data)  # [B, N, D]
+                loss, extra = self._vote(output, target)
+                preds_tensor.append(output)
+                targets_tensor.append(target)
+
+                if self._loss_type == 'classification':
+                    test_acc += extra #.item()
+                test_loss += loss.loss #.item()
+            self._param_net.train()
+
+
+            # self.attackk.set_training_mode(model_training= True, batchnorm_training= True)
+
+
+            # for name, param in self._param_net._conv_net.named_buffers():
+            #     if 'mean' in name:
+            #         param.data = torch.abs(param.data * 0)
+            #     elif 'var' in name:
+            #         param.data = torch.abs(param.data * 0 + 1)
+
+
+            if self._loss_type == 'classification':
+                test_acc /= len(self._test_loader.dataset)
+                preds_tensor = torch.cat(preds_tensor, dim=0)
+                targets_tensor = torch.cat(targets_tensor, dim=0)
+                preds_tensor = F.softmax(preds_tensor, dim=-1).mean(dim=1)
+
+                ece = self.get_expected_calibration_error(preds_tensor, targets_tensor)
+                alf.summary.scalar(name='eval/test_acc', data=test_acc * 100)
+                alf.summary.scalar(name='ECE', data=ece)
+
+             #  #Amin's edits
+            acc = test_acc * 100
+            if acc > self.best_acc:
+                self.save_generator_weights()
+                self.best_acc = acc
         if self._logging_evaluate:
             if self._loss_type == 'classification':
                 logging.info("Test acc: {}".format(test_acc * 100))
+                logging.info(" ECE: {} ".format(ece))
             logging.info("Test loss: {}".format(test_loss))
         alf.summary.scalar(name='eval/test_loss', data=test_loss)
+        return loss,test_acc
 
     def _classification_vote(self, output, target):
         """Ensemble the ooutputs from sampled classifiers."""
@@ -658,6 +878,7 @@ class HyperNetwork(Algorithm):
         correct = vote.eq(target.cpu().view_as(vote)).float().cpu().sum()
         target = target.unsqueeze(1).expand(*target.shape[:1], num_particles,
                                             *target.shape[1:])
+        
         loss = classification_loss(output, target)
         return loss, correct
 
@@ -686,28 +907,29 @@ class HyperNetwork(Algorithm):
 
         if num_particles is None:
             num_particles = self._num_particles
-        params = self.sample_parameters(num_particles=num_particles)
-        self._param_net.set_parameters(params)
-
         with torch.no_grad():
-            outputs = predict_dataset(self._param_net, self._test_loader)
-            outputs_outlier = predict_dataset(self._param_net,
-                                              self._outlier_test_loader)
-        probs = F.softmax(outputs, -1)
-        probs_outlier = F.softmax(outputs_outlier, -1)
+            params = self.sample_parameters(num_particles=num_particles)
+            self._param_net.set_parameters(params)
 
-        mean_probs = probs.mean(0)
-        mean_probs_outlier = probs_outlier.mean(0)
+            with torch.no_grad():
+                outputs = predict_dataset(self._param_net, self._test_loader)
+                outputs_outlier = predict_dataset(self._param_net,
+                                                  self._outlier_test_loader)
+            probs = F.softmax(outputs, -1)
+            probs_outlier = F.softmax(outputs_outlier, -1)
 
-        entropy = torch.distributions.Categorical(mean_probs).entropy()
-        entropy_outlier = torch.distributions.Categorical(
-            mean_probs_outlier).entropy()
+            mean_probs = probs.mean(0)
+            mean_probs_outlier = probs_outlier.mean(0)
 
-        variance = F.softmax(outputs, -1).var(0).sum(-1)
-        variance_outlier = F.softmax(outputs_outlier, -1).var(0).sum(-1)
+            entropy = torch.distributions.Categorical(mean_probs).entropy()
+            entropy_outlier = torch.distributions.Categorical(
+                mean_probs_outlier).entropy()
 
-        auroc_entropy = auc_score(entropy, entropy_outlier)
-        auroc_variance = auc_score(variance, variance_outlier)
+            variance = F.softmax(outputs, -1).var(0).sum(-1)
+            variance_outlier = F.softmax(outputs_outlier, -1).var(0).sum(-1)
+
+            auroc_entropy = auc_score(entropy, entropy_outlier)
+            auroc_variance = auc_score(variance, variance_outlier)
         logging.info("AUROC score (entropy): {}".format(auroc_entropy))
         logging.info("AUROC score (variance): {}".format(auroc_variance))
         alf.summary.scalar(name='eval/auroc_entropy', data=auroc_entropy)
@@ -750,3 +972,19 @@ class HyperNetwork(Algorithm):
         if inverse_mvp_loss is not None:
             alf.summary.scalar(
                 name='train_epoch/inverse_mvp_loss', data=inverse_mvp_loss)
+
+    @staticmethod
+    def get_expected_calibration_error(y_pred, y_true, num_bins=15):
+
+        prob_y, pred_y = torch.max(y_pred, axis=-1)
+        correct = (pred_y == y_true).type(torch.float)
+        bins = torch.linspace(start=0, end=1.0, steps=num_bins)
+        bins = torch.bucketize(prob_y, boundaries=bins, right=False)
+
+        num = 0
+        for b in range(num_bins):
+            mask = bins == b
+            if torch.any(mask):
+                num += torch.abs(torch.sum(correct[mask] - prob_y[mask]))
+
+        return num / y_pred.shape[0]

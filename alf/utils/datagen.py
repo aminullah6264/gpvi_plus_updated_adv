@@ -148,12 +148,16 @@ def load_cifar10(label_idx=None, train_bs=100, test_bs=100, num_workers=0):
 
     data_transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465),
-                             (0.2023, 0.1994, 0.2010))
+        # transforms.Normalize((0.4914, 0.4822, 0.4465),
+        #                      (0.2023, 0.1994, 0.2010))
     ])
 
     trainset = datasets.CIFAR10(
-        root=path, train=True, download=True, transform=data_transform)
+        root=path, train=True, download=True, transform= transforms.Compose([
+            # transforms.RandomHorizontalFlip(),
+            # transforms.RandomCrop(32, 4),
+            data_transform,
+        ]))
 
     testset = datasets.CIFAR10(
         root=path, train=False, download=True, transform=data_transform)

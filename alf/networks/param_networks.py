@@ -1,3 +1,12 @@
+
+
+
+
+
+
+
+
+
 # Copyright (c) 2020 Horizon Robotics and ALF Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,10 +22,11 @@
 # limitations under the License.
 """Networks with input parameters."""
 
+from builtins import print
 import functools
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 import alf
 from alf.initializers import variance_scaling_init
 from alf.layers import ParamFC, ParamConv2D
@@ -26,56 +36,16 @@ from alf.utils import common
 
 
 @alf.configurable
-class ParamConvNet(Network):
-    def __init__(self,
-                 input_channels,
-                 input_size,
-                 conv_layer_params,
-                 same_padding=False,
-                 activation=torch.relu_,
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1, activation=torch.relu_,
                  use_bias=False,
                  use_norm=None,
                  n_groups=None,
-                 kernel_initializer=None,
-                 flatten_output=False,
-                 name="ParamConvNet"):
-        """A fully 2D conv network that does not maintain its own network parameters,
-        but accepts them from users. If the given parameter tensor has an extra batch
-        dimension (first dimension), it performs parallel operations.
+                 kernel_initializer=None):
+        super(BasicBlock, self).__init__()
 
-        Args:
-            input_channels (int): number of channels in the input image
-            input_size (int or tuple): the input image size (height, width)
-            conv_layer_params (tuple[tuple]): a tuple of tuples where each
-                tuple takes a format
-                ``(filters, kernel_size, strides, padding, pooling_kernel)``,
-                where ``padding`` and ``pooling_kernel`` are optional.
-            same_padding (bool): similar to TF's conv2d ``same`` padding mode. If
-                True, the user provided paddings in `conv_layer_params` will be
-                replaced by automatically calculated ones; if False, it
-                corresponds to TF's ``valid`` padding mode (the user can still
-                provide custom paddings though)
-            activation (torch.nn.functional): activation for all the layers
-            use_bias (bool|None): whether use bias. If None, will use_bias if
-                ``use_norm`` is None.
-            use_norm (str): which normalization to apply, options are
-                [``bn`, ``ln``]. Default: None, no normalization applied.
-            n_groups (int): number of parallel groups, must be specified if 
-                ``use_norm``
-            kernel_initializer (Callable): initializer for all the layers.
-            flatten_output (bool): If False, the output will be an image
-                structure of shape ``(B, n, C, H, W)``; otherwise the output
-                will be flattened into a feature of shape ``(B, n, C*H*W)``.
-            name (str):
-        """
-
-        input_size = common.tuplify2d(input_size)
-        super().__init__(
-            input_tensor_spec=TensorSpec((input_channels, ) + input_size),
-            name=name)
-
-        assert isinstance(conv_layer_params, tuple)
-        assert len(conv_layer_params) > 0
 
         if use_bias is None:
             use_bias = use_norm is None
@@ -86,40 +56,46 @@ class ParamConvNet(Network):
                 distribution='truncated_normal',
                 nonlinearity=activation)
 
-        self._flatten_output = flatten_output
-        self._conv_layer_params = conv_layer_params
-        self._conv_layers = nn.ModuleList()
+        self.in_planes = in_planes
+        self.planes = planes
+        self.stride = stride
         self._param_length = None
-        for paras in conv_layer_params:
-            filters, kernel_size, strides = paras[:3]
-            padding = paras[3] if len(paras) > 3 else 0
-            pooling_kernel = paras[4] if len(paras) > 4 else None
-            if same_padding:  # overwrite paddings
-                kernel_size = common.tuplify2d(kernel_size)
-                padding = ((kernel_size[0] - 1) // 2,
-                           (kernel_size[1] - 1) // 2)
-            self._conv_layers.append(
-                ParamConv2D(
-                    input_channels,
-                    filters,
-                    kernel_size,
-                    activation=activation,
-                    strides=strides,
-                    pooling_kernel=pooling_kernel,
-                    padding=padding,
-                    use_bias=use_bias,
-                    use_norm=use_norm,
-                    n_groups=n_groups,
-                    kernel_initializer=kernel_initializer))
-            input_channels = filters
 
+        
+
+
+        self.conv1 = ParamConv2D(self.in_planes, self.planes, 3, activation=activation, strides=self.stride,
+                     padding=1, use_bias=use_bias, use_norm=use_norm,
+                     n_groups=n_groups, kernel_initializer=kernel_initializer)
+        # self.conv1 = ParamConv2D(self.in_planes, self.planes, 1, activation=activation, strides=self.stride,
+        #              padding=0, use_bias=use_bias, use_norm=use_norm,
+        #              n_groups=n_groups, kernel_initializer=kernel_initializer)
+
+        self.conv2 = ParamConv2D(self.planes, self.planes, 3, activation=activation, strides= 1,
+                     padding=1, use_bias=use_bias, use_norm=use_norm,
+                     n_groups=n_groups, kernel_initializer=kernel_initializer)
+
+        
+
+        if self.stride != 1 or self.in_planes != self.planes:
+            self.shortcut = ParamConv2D(self.in_planes, self.expansion* self.planes, 1, activation=activation, strides=self.stride,
+                            padding= 0, use_bias=use_bias, use_norm=use_norm,
+                            n_groups=n_groups, kernel_initializer=kernel_initializer)
+
+  
+    
     @property
     def param_length(self):
         """Get total number of parameters for all layers. """
         if self._param_length is None:
             length = 0
-            for conv_l in self._conv_layers:
-                length = length + conv_l.param_length
+
+            length = length + self.conv1.param_length
+            length = length + self.conv2.param_length
+
+            if self.stride != 1 or self.in_planes != self.planes:
+                length = length + self.shortcut.param_length
+
             self._param_length = length
         return self._param_length
 
@@ -143,26 +119,174 @@ class ParamConvNet(Network):
             "Input theta has wrong shape %s. Expecting shape (, %d)" %
             self.param_length)
         pos = 0
-        for conv_l in self._conv_layers:
+        param_length = self.conv1.param_length
+        self.conv1.set_parameters(
+                theta[:, pos:pos + param_length], reinitialize=reinitialize)
+        pos = pos + param_length
+
+        param_length = self.conv2.param_length
+        self.conv2.set_parameters(
+                theta[:, pos:pos + param_length], reinitialize=reinitialize)
+        pos = pos + param_length
+
+        if self.stride != 1 or self.in_planes != self.planes:
+            param_length = self.shortcut.param_length
+            self.shortcut.set_parameters(
+                    theta[:, pos:pos + param_length], reinitialize=reinitialize)
+            pos = pos + param_length
+
+        self._output_spec = None
+
+
+    def forward(self, x):
+        out = self.conv1(x, keep_group_dim=False)
+        # print(out.shape)
+        out = self.conv2(out, keep_group_dim=False)
+        # print(out.shape)
+
+        if self.stride != 1 or self.in_planes != self.planes:
+            out = out.clone() + self.shortcut(x, keep_group_dim=False)
+            out = torch.relu_(out)
+            # print(out.shape)
+
+        return out
+
+@alf.configurable
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=10, activation=torch.relu_,
+                 use_bias=False,
+                 use_norm=None,
+                 n_groups=None,
+                 kernel_initializer=None,
+                 flatten_output= False):
+        super(ResNet, self).__init__()
+        self.in_planes = 16
+
+        self.activation= activation
+        self.use_bias= use_bias
+        self.use_norm= use_norm
+        self.n_groups= n_groups
+        self.kernel_initializer= kernel_initializer
+        self.flatten_output= flatten_output
+        self._param_length = None
+
+        if self.use_bias is None:
+            self.use_bias = self.use_norm is None
+        if self.kernel_initializer is None:
+            self.kernel_initializer = functools.partial(
+                variance_scaling_init,
+                mode='fan_in',
+                distribution='truncated_normal',
+                nonlinearity=activation)
+
+        self.conv1 = ParamConv2D(3, self.in_planes, 3, activation=self.activation, strides=1,
+                     padding=1, use_bias=self.use_bias, use_norm= self.use_norm,
+                     n_groups=self.n_groups, kernel_initializer=self.kernel_initializer)
+
+        self.layer1 = self._make_layer(block, 16, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
+
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride, activation=self.activation,
+                 use_bias=self.use_bias,
+                 use_norm=self.use_norm,
+                 n_groups=self.n_groups,
+                 kernel_initializer=self.kernel_initializer))
+            self.in_planes = planes * block.expansion
+
+        return nn.Sequential(*layers)
+
+
+    @property
+    def param_length(self):
+        """Get total number of parameters for all layers. """
+        if self._param_length is None:
+            length = 0
+
+            length = length + self.conv1.param_length
+
+            for conv_l in self.layer1:
+                length = length + conv_l.param_length
+
+            for conv_l in self.layer2:
+                length = length + conv_l.param_length
+
+            for conv_l in self.layer3:
+                length = length + conv_l.param_length
+
+            self._param_length = length
+        return self._param_length
+
+
+    
+    def set_parameters(self, theta, reinitialize=False):
+        """Distribute parameters to corresponding layers.
+
+        Args:
+            theta (torch.Tensor): with shape ``[D] (groups=1)``
+                                        or ``[B, D] (groups=B)``
+                where the meaning of the symbols are:
+                - ``B``: batch size
+                - ``D``: length of parameters, should be self.param_length
+                When the shape of inputs is ``[D]``, it will be unsqueezed
+                to ``[1, D]``.
+            reinitialize (bool): whether to reinitialize parameters of
+                each layer.
+        """
+        if theta.ndim == 1:
+            theta = theta.unsqueeze(0)
+        assert (theta.ndim == 2 and theta.shape[1] == self.param_length), (
+            "Input theta has wrong shape %s. Expecting shape (, %d)" %
+            self.param_length)
+        pos = 0
+        param_length = self.conv1.param_length
+        self.conv1.set_parameters(
+                theta[:, pos:pos + param_length], reinitialize=reinitialize)
+        pos = pos + param_length
+
+        for conv_l in self.layer1:
             param_length = conv_l.param_length
             conv_l.set_parameters(
                 theta[:, pos:pos + param_length], reinitialize=reinitialize)
             pos = pos + param_length
+
+        for conv_l in self.layer2:
+            param_length = conv_l.param_length
+            conv_l.set_parameters(
+                theta[:, pos:pos + param_length], reinitialize=reinitialize)
+            pos = pos + param_length
+        
+        for conv_l in self.layer3:
+            param_length = conv_l.param_length
+            conv_l.set_parameters(
+                theta[:, pos:pos + param_length], reinitialize=reinitialize)
+            pos = pos + param_length
+
         self._output_spec = None
 
-    def forward(self, inputs, state=()):
-        """
-        Args:
-            inputs (Tensor):
-            state: not used, just keeps the interface same with other networks.
-        """
-        x = inputs
-        for conv_l in self._conv_layers[:-1]:
-            x = conv_l(x, keep_group_dim=False)
-        x = self._conv_layers[-1](x)
-        if self._flatten_output:
-            x = x.reshape(*x.shape[:-3], -1)
-        return x, state
+    def forward(self, x, state=()):
+        out = self.conv1(x, keep_group_dim=False)
+        # print(out.shape)
+        # import ipdb;ipdb.set_trace()
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+
+
+        out = F.avg_pool2d(out, out.size()[3])
+        if self.flatten_output:
+            out = out.view(out.shape[0], -1, self.in_planes)
+        
+        # out = out.view(out.size(0), -1)
+        # out = self.linear(out)
+        return out, state
+
+
 
 
 @alf.configurable
@@ -239,16 +363,29 @@ class ParamNetwork(Network):
                 "The input shape {} should be like (C,H,W)!".format(
                     input_tensor_spec.shape)
             input_channels, height, width = input_tensor_spec.shape
-            self._conv_net = ParamConvNet(
-                input_channels, (height, width),
-                conv_layer_params,
+
+            block_size = 3         # block_size = {3, 5, 7, 9}, leading to 20, 32, 44, and 56-layer networks. 
+            self._conv_net = ResNet(BasicBlock, [block_size, block_size, block_size],
                 activation=activation,
                 use_bias=use_conv_bias,
                 use_norm=use_conv_norm,
                 n_groups=n_groups,
                 kernel_initializer=kernel_initializer,
                 flatten_output=True)
-            input_size = self._conv_net.output_spec.shape[-1]
+            input_size = self._conv_net.in_planes
+            
+            
+
+            # self._conv_net = ParamConvNet(
+            #     input_channels, (height, width),
+            #     conv_layer_params,
+            #     activation=activation,
+            #     use_bias=use_conv_bias,
+            #     use_norm=use_conv_norm,
+            #     n_groups=n_groups,
+            #     kernel_initializer=kernel_initializer,
+            #     flatten_output=True)
+            # input_size = self._conv_net.output_spec.shape[-1]
         else:
             assert input_tensor_spec.ndim == 1, \
                 "The input shape {} should be like (N,)!".format(
@@ -347,6 +484,8 @@ class ParamNetwork(Network):
         x = inputs
         if self._conv_net is not None:
             x, state = self._conv_net(x, state=state)
+        
+        # import ipdb; ipdb.set_trace()
         for fc_l in self._fc_layers:
             x = fc_l(x)
         return x, state

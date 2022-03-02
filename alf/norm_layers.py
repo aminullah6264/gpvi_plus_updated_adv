@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from re import S
+from stringprep import c6_set
+from telnetlib import X3PAD
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -547,7 +550,7 @@ class ParamBatchNorm(nn.Module):
                                                        torch.Tensor)
         assert self.running_var is None or isinstance(self.running_var,
                                                       torch.Tensor)
-
+        
         res = F.batch_norm(
             inputs,
             # If buffers are not to be tracked, ensure that they won't be updated
@@ -801,9 +804,12 @@ class ParamLayerNorm(nn.Module):
                 for BatchNorm2d, with shape ``[B, n, C, H, W]`` or ``[B, n*C, H, W]``.
         """
         inputs = self._preprocess_input(inputs)
+        # import ipdb; ipdb.set_trace()
+
 
         res = F.group_norm(inputs, self._n_groups, self.weight, self.bias,
                            self._eps)
+
 
         if self._n_groups > 1 and keep_group_dim:
             res = res.reshape(inputs.shape[0], self._n_groups, -1,
@@ -911,3 +917,389 @@ class ParamLayerNorm2d(ParamLayerNorm):
                 raise ValueError("Wrong img.ndim=%d" % inputs.ndim)
 
         return inputs
+
+
+
+class SwishImplementation(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, i):
+        ctx.save_for_backward(i)
+        return i * torch.sigmoid(i)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        sigmoid_i = torch.sigmoid(ctx.saved_variables[0])
+        return grad_output * (
+            sigmoid_i * (1 + ctx.saved_variables[0] * (1 - sigmoid_i))
+        )
+
+
+class MemoryEfficientSwish(nn.Module):
+    def forward(self, x):
+        return SwishImplementation.apply(x)
+
+
+class ParamEvoNorm2D(nn.Module):
+    def __init__(
+        self,
+        input,
+        n_groups=int,
+        non_linear=True,
+        version="S0", #S0, S1, S2, B0
+        efficient=False,
+        affine=True,
+        momentum=0.9,
+        eps=1e-5,
+        groups=32,
+        training=True,
+    ):
+        super(ParamEvoNorm2D, self).__init__()
+        self._n_groups = n_groups
+        self.non_linear = non_linear
+        self.version = version
+        self.training = training
+        self.momentum = momentum
+        self.efficient = efficient
+        if self.version == "S0" or self.version == "S1" or self.version == "S2":
+            self.swish = MemoryEfficientSwish()
+        self.groups = input // 2 * n_groups
+        self.eps = eps
+        if self.version not in ["B0", "S0", "S1", "S2"]:
+            raise ValueError("Invalid EvoNorm version")
+        self.insize = input
+        self.affine = affine
+        
+        if self.affine:
+            # self.gamma = self._set_gamma_weight(torch.randn(1, self._n_groups* self.insize, 1, 1) * torch.sqrt(torch.cuda.FloatTensor([2/self.insize])))
+            # self.beta = self._set_beta_weight(torch.randn(1, self._n_groups* self.insize, 1, 1) * torch.sqrt(torch.cuda.FloatTensor([2/self.insize])))
+
+
+            self.gamma = self._set_gamma_weight(torch.ones(1, self._n_groups* self.insize, 1, 1))
+            self.beta = self._set_beta_weight(torch.zeros(1, self._n_groups* self.insize, 1, 1))
+
+            if self.non_linear:
+                self.v = self._set_v_weight(torch.randn(1, self._n_groups* self.insize, 1, 1) * torch.sqrt(torch.cuda.FloatTensor([2/self.insize])))
+
+        else:
+            self.register_parameter("gamma", None)
+            self.register_parameter("beta", None)
+            self.register_buffer("v", None)
+        self.register_buffer("running_var", torch.ones(1, self._n_groups*self.insize, 1, 1))
+
+        self.reset_parameters()
+        self._param_length = None
+
+    def reset_parameters(self):
+        self.running_var.fill_(1)
+
+    def _check_input_dim(self, x):
+        if x.dim() != 4:
+            raise ValueError("expected 4D input (got {}D input)".format(x.dim()))
+
+    
+    
+    def instance_std(self, x, eps=1e-5):
+        var = torch.var(x, dim=(2, 3), keepdim=True).expand_as(x)
+        if torch.isnan(var).any():
+            var = torch.zeros(var.shape)
+        return torch.sqrt(var + eps)
+
+
+    def group_std(self, x, groups=32, eps=1e-5):
+        N, C, H, W = x.size()
+        # import ipdb; ipdb.set_trace()
+        x = torch.reshape(x, (N, groups, C // groups, H, W))
+        var = torch.var(x, dim=(2, 3, 4), keepdim=True).expand_as(x)
+        return torch.reshape(torch.sqrt(var + eps), (N, C, H, W))
+
+    def group_mean(self, x, groups=32, eps=1e-5):
+        x = x.pow(2)
+        N, C, H, W = x.size()
+        x = torch.reshape(x, (N, groups, C // groups, H, W))
+        mean = torch.mean(x, dim=(2, 3, 4), keepdim=True).expand_as(x)
+        return torch.reshape(torch.sqrt(mean + eps), (N, C, H, W))
+    
+    @property
+    def gamma_weight_length(self):
+        """Get the n_element of a gamma weight tensor. """
+        return self.insize
+
+    @property
+    def beta_weight_length(self):
+        """Get the n_element of a beta weight tensor. """
+        return self.insize
+
+    @property
+    def v_weight_length(self):
+        """Get the n_element of a learnable v weight tensor. """
+        return self.insize
+
+    @property
+    def param_length(self):
+        """Get total number of parameters for all layers. """
+        if self._param_length is None and self.non_linear:
+            self._param_length = self.gamma_weight_length + self.beta_weight_length + self.v_weight_length
+        else:
+            self._param_length = self.gamma_weight_length + self.beta_weight_length 
+
+        return self._param_length
+
+    def set_parameters(self, theta: torch.Tensor, reinitialize: bool = False):
+        """Distribute parameters to corresponding parameters.
+
+        Args:
+            theta: with shape ``[D] (groups=1)`` or ``[B, D] (groups=B)``,
+                where the meaning of the symbols are:
+                - ``B``: batch size
+                - ``D``: length of parameters, should be self.param_length
+                When the shape of inputs is ``[D]``, it will be unsqueezed
+                to ``[1, D]``.
+            reinitialize: whether to reinitialize parameters of each layer.
+        """
+        # if theta.ndim == 1:
+        #     theta = theta.unsqueeze(0)
+        # assert (theta.ndim == 2 and theta.shape[0] == self._n_groups
+        #         and (theta.shape[1] == self.param_length)), (
+        #             "Input theta has wrong shape %s. Expecting shape (%d, %d)"
+        #             % (theta.shape, self._n_groups, self.param_length))
+
+
+        # import ipdb; ipdb.set_trace()
+        gamma_weight = theta[:, :self.gamma_weight_length] 
+        self._set_gamma_weight(gamma_weight, reinitialize=reinitialize)
+
+        beta_weight = theta[:, self.gamma_weight_length: self.gamma_weight_length + self.beta_weight_length] 
+        self._set_beta_weight(beta_weight, reinitialize=reinitialize)
+        
+        if self.non_linear:
+            v_weight = theta[:, self.gamma_weight_length + self.beta_weight_length:] 
+            self._set_v_weight(v_weight, reinitialize=reinitialize)
+
+        
+
+    def _set_gamma_weight(self, weight: torch.Tensor, reinitialize: bool = False):
+        """Store a weight tensor or batch of weight tensors.
+
+        Args:
+            weight: with shape ``[B, D]`` where the mining of the symbols are:
+                - ``B``: batch size
+                - ``D``: length of weight vector, should be self.weight_length
+            reinitialize: whether to reinitialize self._weight
+        """
+        # assert (weight.ndim == 2 and weight.shape[0] == self._n_groups
+        #         and (weight.shape[1] == self.insize)), (
+        #             "Input weight has wrong shape %s. Expecting shape (%d, %d)"
+        #             % (weight.shape, self._n_groups, self.insize))
+        if reinitialize:
+            weight = torch.ones(1, self._n_groups* self.insize, 1, 1)
+
+        
+        self.gamma = weight.reshape(1, self._n_groups *self.insize, 1, 1)  
+
+    def _set_beta_weight(self, weight: torch.Tensor, reinitialize: bool = False):
+        """Store a weight tensor or batch of weight tensors.
+
+        Args:
+            weight: with shape ``[B, D]`` where the mining of the symbols are:
+                - ``B``: batch size
+                - ``D``: length of weight vector, should be self.weight_length
+            reinitialize: whether to reinitialize self._weight
+        """
+        # assert (weight.ndim == 2 and weight.shape[0] == self._n_groups
+        #         and (weight.shape[1] == self.insize)), (
+        #             "Input weight has wrong shape %s. Expecting shape (%d, %d)"
+        #             % (weight.shape, self._n_groups, self.insize))
+        if reinitialize:
+            weight = torch.zeros(1, self._n_groups* self.insize, 1, 1)
+
+        
+        self.beta = weight.reshape(1, self._n_groups *self.insize, 1, 1) 
+    
+    def _set_v_weight(self, weight: torch.Tensor, reinitialize: bool = False):
+        """Store a weight tensor or batch of weight tensors.
+
+        Args:
+            weight: with shape ``[B, D]`` where the mining of the symbols are:
+                - ``B``: batch size
+                - ``D``: length of weight vector, should be self.weight_length
+            reinitialize: whether to reinitialize self._weight
+        """
+        # assert (weight.ndim == 2 and weight.shape[0] == self._n_groups
+        #         and (weight.shape[1] == self.insize)), (
+        #             "Input weight has wrong shape %s. Expecting shape (%d, %d)"
+        #             % (weight.shape, self._n_groups, self.insize))
+        if reinitialize:
+            weight = torch.ones(1, self._n_groups* self.insize, 1, 1)
+
+        self.v = weight.reshape(1, self._n_groups *self.insize, 1, 1)
+
+    def _preprocess_input(self, inputs):
+        raise NotImplementedError
+
+    def forward(self, x, keep_group_dim: bool = True):
+
+        # print(self.gamma[0][0], self.beta[0][0], self.v[0][0])
+        
+        self._check_input_dim(x)
+        if self.version == "S0":
+            # import ipdb; ipdb.set_trace()
+            if self.non_linear:
+                if not self.efficient:
+                    num = x * torch.sigmoid(
+                        self.v * x
+                    )  # Original Swish Implementation, however memory intensive.
+                else:
+                    num = self.swish(
+                        x
+                    )  # Experimental Memory Efficient Variant of Swish
+
+                res = num / self.group_std(x, groups=self.groups, eps=self.eps) * self.gamma # + self.beta
+
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+
+                return res
+            else:
+                res = x * self.gamma + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+                return res
+
+
+        if self.version == "S1":
+            # import ipdb; ipdb.set_trace()
+            if self.non_linear:
+                if not self.efficient:
+                    num = x * torch.sigmoid(x)
+                else:
+                    num = self.swish(
+                        x
+                    )  # Experimental Memory Efficient Variant of Swish
+
+                res = num / self.group_std(x, groups=self.groups, eps=self.eps) * self.gamma #+ self.beta
+
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+
+                return res
+            else:
+                res = x * self.gamma + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+                return res
+        
+        if self.version == "S2":
+            if self.non_linear:
+                if not self.efficient:
+                    num = x * torch.sigmoid(x)
+                else:
+                    num = self.swish(
+                        x
+                    )  # Experimental Memory Efficient Variant of Swish
+                
+                # import ipdb; ipdb.set_trace()
+
+                grp_mean = self.group_mean(x, groups=self.groups, eps=self.eps)
+
+                res = num / grp_mean * self.gamma # + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+                return res
+            else:
+                res = x * self.gamma + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+                return res
+
+        if self.version == "B0":
+            if self.training:
+                var = torch.var(x, dim=(0, 2, 3), unbiased=False, keepdim=True)
+                self.running_var.mul_(self.momentum)
+                self.running_var.add_((1 - self.momentum) * var)
+                # self.running_var.copy_(self.momentum * self.running_var + (1 - self.momentum) * var)
+            else:
+                var = self.running_var
+
+            if self.non_linear:
+                den = torch.max(
+                    (var + self.eps).sqrt(), self.v * x + self.instance_std(x, eps=self.eps)
+                )
+
+                res = x / den * self.gamma + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+
+                return res
+            else:
+                res = x * self.gamma + self.beta
+                if self._n_groups > 1 and keep_group_dim:
+                    res = res.reshape(x.shape[0], self._n_groups, -1,
+                                    *x.shape[2:])  # [B, n, ...]
+                return res
+
+
+class ParamEvoNorm2d(ParamEvoNorm2D):
+    def _preprocess_input(self, inputs: torch.Tensor):
+        """Check inputs shape and preprocess for BatchNorm2d.
+
+        Args:
+            inputs: with shape ``[B, C, H, W] (groups=1)``
+                    or ``[B, n, C, H, W] (groups=n)``,
+                where the meaning of the symbols are:
+
+                - ``B``: batch size
+                - ``n``: number of replicas
+                - ``C``: number of channels
+                - ``H``: image height
+                - ``W``: image width.
+
+                When the shape of img is ``[B, C, H, W]``, all the n 2D Conv
+                operations will take img as the same shared input.
+                When the shape of img is ``[B, n, C, H, W]``, each 2D Conv operator
+                will have its own input data by slicing img.
+
+        Returns:
+            torch.Tensor with shape ``[B, n*C, H, W]``
+        """
+        if self._n_groups == 1:
+            # non-parallel layer
+            assert (inputs.ndim == 4
+                    and inputs.shape[1] == self.insize), (
+                        "Input img has wrong shape %s. Expecting (B, %d, H, W)"
+                        % (inputs.shape, self.insize))
+        else:
+            # parallel layer
+            if inputs.ndim == 4:
+                if inputs.shape[1] == self.insize:
+                    # case 1: non-parallel input
+                    inputs = inputs.repeat(1, self._n_groups, 1, 1)
+                else:
+                    # case 2: parallel input
+                    assert inputs.shape[
+                        1] == self._n_groups * self.insize, (
+                            "Input img has wrong shape %s. Expecting (B, %d, H, W) or (B, %d, H, W)"
+                            % (inputs.shape, self.insize,
+                               self._n_groups * self.insize))
+            elif inputs.ndim == 5:
+                # case 3: parallel input with unmerged group dim
+                assert (
+                    inputs.shape[1] == self._n_groups
+                    and inputs.shape[2] == self.insize
+                ), ("Input img has wrong shape %s. Expecting (B, %d, %d, H, W)"
+                    % (inputs.shape, self._n_groups, self.insize))
+                # merge group and channel dim
+                inputs = inputs.reshape(inputs.shape[0],
+                                        inputs.shape[1] * inputs.shape[2],
+                                        *inputs.shape[3:])
+            else:
+                raise ValueError("Wrong img.ndim=%d" % inputs.ndim)
+
+        return inputs
+
