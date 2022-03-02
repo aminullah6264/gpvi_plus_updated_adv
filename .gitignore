@@ -7,6 +7,8 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+*.pt
+*GPVI+*/
 .Python
 build/
 develop-eggs/

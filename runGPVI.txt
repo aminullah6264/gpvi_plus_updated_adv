@@ -1,0 +1,18 @@
+python -m alf.bin.train --root_dir ../ResNet_A_Test_LN --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+python -m alf.bin.grid_search     --root_dir=../saved_runs_GS/ResNet_A_LN_Grid_Search    --search_config=alf/examples/hypernetwork_cifar10_gridsearch.json  --conf=alf/examples/hypernetwork_cifar10_conf.py     --conf_param='create_environment.num_parallel_environments=1'     --alsologtostderr
+
+
+
+
+python -m alf.bin.train --root_dir ../GPVI+cifar10ResNet_A_Dim_Test --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+
+python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_A_EN_Clean --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+
+
+python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_B_BN_Clean --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+
+python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_PGD_Test --conf ./alf/examples/hypernetwork_cifar10_conf.py  
