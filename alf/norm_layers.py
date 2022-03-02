@@ -978,7 +978,7 @@ class ParamEvoNorm2D(nn.Module):
             self.beta = self._set_beta_weight(torch.zeros(1, self._n_groups* self.insize, 1, 1))
 
             if self.non_linear:
-                self.v = self._set_v_weight(torch.randn(1, self._n_groups* self.insize, 1, 1) * torch.sqrt(torch.cuda.FloatTensor([2/self.insize])))
+                self.v = self._set_v_weight(torch.ones(1, self._n_groups* self.insize, 1, 1))
 
         else:
             self.register_parameter("gamma", None)

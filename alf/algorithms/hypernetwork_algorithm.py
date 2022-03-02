@@ -735,15 +735,15 @@ class HyperNetwork(Algorithm):
          # Amin's edits     
         
 
-        Adv_data = self.attackk(data, target).to(alf.get_default_device())
+        # Adv_data = self.attackk(data, target).to(alf.get_default_device())
 
-        data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
-        target = torch.cat((target, target),0).to(alf.get_default_device())
+        # data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
+        # target = torch.cat((target, target),0).to(alf.get_default_device())
 
-        shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
-        shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
-        data = data[shuffle_idx]
-        target = target[shuffle_idx]
+        # shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
+        # shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
+        # data = data[shuffle_idx]
+        # target = target[shuffle_idx]
 
         output, _ = self._param_net(data)  # [B, P, D]
         target = target.unsqueeze(1).expand(*target.shape[:1], num_particles,
@@ -809,12 +809,12 @@ class HyperNetwork(Algorithm):
             for i, (data, target) in enumerate(self._test_loader):
                 data = data.to(alf.get_default_device())
                 target = target.to(alf.get_default_device())
-                # with torch.no_grad():
-                #     output, _ = self._param_net(data)  # [B, N, D]
-                Adv_data = self.attackk(data, target).to(alf.get_default_device())
-
                 with torch.no_grad():
-                    output, _ = self._param_net(Adv_data)  # [B, N, D]
+                    output, _ = self._param_net(data)  # [B, N, D]
+                # Adv_data = self.attackk(data, target).to(alf.get_default_device())
+
+                # with torch.no_grad():
+                #     output, _ = self._param_net(Adv_data)  # [B, N, D]
                 loss, extra = self._vote(output, target)
                 preds_tensor.append(output)
                 targets_tensor.append(target)

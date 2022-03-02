@@ -97,7 +97,7 @@ alf.config(
     attackNorm = 'Linf',               # Linf, L2
     dataset='cifar10',                   # cifar10
     attacktype = 'WhiteBox',
-    comment = 'Standard_ResNet_20_EN_S0_PGD_Test'
+    comment = 'Standard_ResNet_20_EN_S0_Clean_Beta_Test'
     )                #WhiteBox #BlackBox
 
 # alf.config('ParamConvNet', use_bias=True)

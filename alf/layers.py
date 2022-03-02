@@ -2071,7 +2071,7 @@ class ParamConv2D(nn.Module):
             elif use_norm == 'ln':
                 self._norm = ParamLayerNorm2d(n_groups, out_channels)
             elif use_norm == 'en':
-                self._norm = ParamEvoNorm2d(in_channels, n_groups)
+                self._norm = ParamEvoNorm2d(out_channels, n_groups)
             else:
                 raise ValueError("Only bn, ln, en norm are supported for use_norm")
             self._n_groups = n_groups
@@ -2257,8 +2257,8 @@ class ParamConv2D(nn.Module):
                 raise ValueError("Wrong img.ndim=%d" % img.ndim)
 
 
-        if self._use_norm is not None and self._use_norm == 'en':
-            img = self._norm(img, keep_group_dim=False)
+        # if self._use_norm is not None and self._use_norm == 'en':
+        #     img = self._norm(img, keep_group_dim=False)
 
         res = F.conv2d(
             img,
@@ -2272,8 +2272,8 @@ class ParamConv2D(nn.Module):
         if self._use_norm is not None and self._use_norm != 'en':
             res = self._norm(res, keep_group_dim=False)
                
-        # if self._use_norm is not None and self._use_norm == 'en':
-        #     res = self._norm(res, keep_group_dim=False)
+        if self._use_norm is not None and self._use_norm == 'en':
+            res = self._norm(res, keep_group_dim=False)
 
         
         if self._use_norm != 'en':

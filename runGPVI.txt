@@ -16,3 +16,8 @@ python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_B_BN_Clean --conf ./a
 
 
 python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_PGD_Test --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+
+python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_20_EN_S0_Clean_Beta_Test --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+
+
