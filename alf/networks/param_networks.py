@@ -1,12 +1,3 @@
-
-
-
-
-
-
-
-
-
 # Copyright (c) 2020 Horizon Robotics and ALF Contributors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -140,14 +131,11 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
         out = self.conv1(x, keep_group_dim=False)
-        # print(out.shape)
         out = self.conv2(out, keep_group_dim=False)
-        # print(out.shape)
 
         if self.stride != 1 or self.in_planes != self.planes:
             out = out.clone() + self.shortcut(x, keep_group_dim=False)
             out = torch.relu_(out)
-            # print(out.shape)
 
         return out
 
@@ -271,8 +259,8 @@ class ResNet(nn.Module):
 
     def forward(self, x, state=()):
         out = self.conv1(x, keep_group_dim=False)
+
         # print(out.shape)
-        # import ipdb;ipdb.set_trace()
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)

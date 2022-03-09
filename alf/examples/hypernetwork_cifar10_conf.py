@@ -51,7 +51,7 @@ FC_LAYER_PARAMS = ()
 HIDDEN_LAYERS = (256, 512, 1024)
 
 noise_dim = 256
-batch_size = 128
+batch_size = 256
 dcreator = functools.partial(datagen.load_cifar10, train_bs=batch_size, test_bs=256)
 
 # dcreator = functools.partial(datagen.load_cifar10,label_idx=[0,1,2,3,4,5], train_bs=batch_size, test_bs=batch_size)
@@ -97,7 +97,7 @@ alf.config(
     attackNorm = 'Linf',               # Linf, L2
     dataset='cifar10',                   # cifar10
     attacktype = 'WhiteBox',
-    comment = 'Standard_ResNet_20_EN_S0_Clean_Beta_Test'
+    comment = 'Standard_ResNet_EN_Less_Clean_Data'
     )                #WhiteBox #BlackBox
 
 # alf.config('ParamConvNet', use_bias=True)

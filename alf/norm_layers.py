@@ -962,7 +962,7 @@ class ParamEvoNorm2D(nn.Module):
         self.efficient = efficient
         if self.version == "S0" or self.version == "S1" or self.version == "S2":
             self.swish = MemoryEfficientSwish()
-        self.groups = input // 2 * n_groups
+        self.groups = input//2 * n_groups
         self.eps = eps
         if self.version not in ["B0", "S0", "S1", "S2"]:
             raise ValueError("Invalid EvoNorm version")
@@ -974,11 +974,13 @@ class ParamEvoNorm2D(nn.Module):
             # self.beta = self._set_beta_weight(torch.randn(1, self._n_groups* self.insize, 1, 1) * torch.sqrt(torch.cuda.FloatTensor([2/self.insize])))
 
 
-            self.gamma = self._set_gamma_weight(torch.ones(1, self._n_groups* self.insize, 1, 1))
-            self.beta = self._set_beta_weight(torch.zeros(1, self._n_groups* self.insize, 1, 1))
+            self.gamma = torch.ones(1, self._n_groups* self.insize, 1, 1)
+            self.beta = torch.zeros(1, self._n_groups* self.insize, 1, 1)
+
+
 
             if self.non_linear:
-                self.v = self._set_v_weight(torch.ones(1, self._n_groups* self.insize, 1, 1))
+                self.v = torch.ones(1, self._n_groups* self.insize, 1, 1)
 
         else:
             self.register_parameter("gamma", None)
@@ -1056,14 +1058,7 @@ class ParamEvoNorm2D(nn.Module):
                 to ``[1, D]``.
             reinitialize: whether to reinitialize parameters of each layer.
         """
-        # if theta.ndim == 1:
-        #     theta = theta.unsqueeze(0)
-        # assert (theta.ndim == 2 and theta.shape[0] == self._n_groups
-        #         and (theta.shape[1] == self.param_length)), (
-        #             "Input theta has wrong shape %s. Expecting shape (%d, %d)"
-        #             % (theta.shape, self._n_groups, self.param_length))
-
-
+       
         # import ipdb; ipdb.set_trace()
         gamma_weight = theta[:, :self.gamma_weight_length] 
         self._set_gamma_weight(gamma_weight, reinitialize=reinitialize)
@@ -1086,10 +1081,6 @@ class ParamEvoNorm2D(nn.Module):
                 - ``D``: length of weight vector, should be self.weight_length
             reinitialize: whether to reinitialize self._weight
         """
-        # assert (weight.ndim == 2 and weight.shape[0] == self._n_groups
-        #         and (weight.shape[1] == self.insize)), (
-        #             "Input weight has wrong shape %s. Expecting shape (%d, %d)"
-        #             % (weight.shape, self._n_groups, self.insize))
         if reinitialize:
             weight = torch.ones(1, self._n_groups* self.insize, 1, 1)
 
@@ -1105,10 +1096,7 @@ class ParamEvoNorm2D(nn.Module):
                 - ``D``: length of weight vector, should be self.weight_length
             reinitialize: whether to reinitialize self._weight
         """
-        # assert (weight.ndim == 2 and weight.shape[0] == self._n_groups
-        #         and (weight.shape[1] == self.insize)), (
-        #             "Input weight has wrong shape %s. Expecting shape (%d, %d)"
-        #             % (weight.shape, self._n_groups, self.insize))
+
         if reinitialize:
             weight = torch.zeros(1, self._n_groups* self.insize, 1, 1)
 
@@ -1222,7 +1210,7 @@ class ParamEvoNorm2D(nn.Module):
                 var = torch.var(x, dim=(0, 2, 3), unbiased=False, keepdim=True)
                 self.running_var.mul_(self.momentum)
                 self.running_var.add_((1 - self.momentum) * var)
-                # self.running_var.copy_(self.momentum * self.running_var + (1 - self.momentum) * var)
+            
             else:
                 var = self.running_var
 
