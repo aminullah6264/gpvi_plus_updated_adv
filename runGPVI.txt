@@ -27,6 +27,6 @@ python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_Only_Adv_Data --co
 python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_S0_Clean --conf ./alf/examples/hypernetwork_cifar10_conf.py  
 
 
-python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_S0_Less_Clean_Data_PGD --conf ./alf/examples/hypernetwork_cifar10_conf.py  
+python -m alf.bin.train --root_dir ../GPVI+Standard_ResNet_EN_Clean_Entropy-1 --conf ./alf/examples/hypernetwork_cifar10_conf.py  
 
 

@@ -977,8 +977,6 @@ class ParamEvoNorm2D(nn.Module):
             self.gamma = torch.ones(1, self._n_groups* self.insize, 1, 1)
             self.beta = torch.zeros(1, self._n_groups* self.insize, 1, 1)
 
-
-
             if self.non_linear:
                 self.v = torch.ones(1, self._n_groups* self.insize, 1, 1)
 

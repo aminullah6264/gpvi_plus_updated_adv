@@ -344,23 +344,25 @@ class ParamNetwork(Network):
 
         self._param_length = None
         self._conv_net = None
-        if conv_layer_params:
-            assert isinstance(conv_layer_params, tuple), \
-                "The input params {} should be tuple".format(conv_layer_params)
-            assert input_tensor_spec.ndim == 3, \
-                "The input shape {} should be like (C,H,W)!".format(
-                    input_tensor_spec.shape)
-            input_channels, height, width = input_tensor_spec.shape
 
-            block_size = 3         # block_size = {3, 5, 7, 9}, leading to 20, 32, 44, and 56-layer networks. 
-            self._conv_net = ResNet(BasicBlock, [block_size, block_size, block_size],
-                activation=activation,
-                use_bias=use_conv_bias,
-                use_norm=use_conv_norm,
-                n_groups=n_groups,
-                kernel_initializer=kernel_initializer,
-                flatten_output=True)
-            input_size = self._conv_net.in_planes
+        block_size = 3         # block_size = {3, 5, 7, 9}, leading to 20, 32, 44, and 56-layer networks. 
+        self._conv_net = ResNet(BasicBlock, [block_size, block_size, block_size],
+            activation=activation,
+            use_bias=use_conv_bias,
+            use_norm=use_conv_norm,
+            n_groups=n_groups,
+            kernel_initializer=kernel_initializer,
+            flatten_output=True)
+        input_size = self._conv_net.in_planes
+        
+        # if conv_layer_params:
+        #     assert isinstance(conv_layer_params, tuple), \
+        #         "The input params {} should be tuple".format(conv_layer_params)
+        #     assert input_tensor_spec.ndim == 3, \
+        #         "The input shape {} should be like (C,H,W)!".format(
+        #             input_tensor_spec.shape)
+        #     input_channels, height, width = input_tensor_spec.shape
+
             
             
 
@@ -374,11 +376,11 @@ class ParamNetwork(Network):
             #     kernel_initializer=kernel_initializer,
             #     flatten_output=True)
             # input_size = self._conv_net.output_spec.shape[-1]
-        else:
-            assert input_tensor_spec.ndim == 1, \
-                "The input shape {} should be like (N,)!".format(
-                    input_tensor_spec.shape)
-            input_size = input_tensor_spec.shape[0]
+        # else:
+        #     assert input_tensor_spec.ndim == 1, \
+        #         "The input shape {} should be like (N,)!".format(
+        #             input_tensor_spec.shape)
+        #     input_size = input_tensor_spec.shape[0]
 
         self._fc_layers = nn.ModuleList()
         if fc_layer_params is None:

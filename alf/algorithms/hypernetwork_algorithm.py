@@ -125,6 +125,7 @@ class HyperNetwork(Algorithm):
                  attackNorm = "Linf",
                  dataset="cifar10",
                  attacktype = 'WhiteBox',
+                 Adv_Training = False,
                  comment = 'Saved_Model'):
         """
         Args:
@@ -366,6 +367,7 @@ class HyperNetwork(Algorithm):
         self.attackNorm = attackNorm
         self.dataset = dataset
         self.attacktype = attacktype
+        self.Adv_Training = Adv_Training
         self.comment = comment
 
        
@@ -536,8 +538,11 @@ class HyperNetwork(Algorithm):
     # Amin's edits
     def save_generator_weights(self):
         state_dict = self._generator._net.state_dict()
-        name_dir = './Normalize0_1%255/' + self.attacktype + '_' + self.dataset + '_' + self.attack + '_' + self.attackNorm + '_' + str(self.eps) + '_' + str(self.eps_alpha) + '_' + str(self.steps)+ '_' + self.comment + '_'
-        # name_dir = './Normalize0_1%255/' + self.comment + '_'
+
+        if self.Adv_Training:
+            name_dir = './Normalize0_1%255/' + self.attacktype + '_' + self.dataset + '_' + self.attack + '_' + self.attackNorm + '_' + str(self.eps) + '_' + str(self.eps_alpha) + '_' + str(self.steps)+ '_' + self.comment + '_'
+        else:
+            name_dir = './Normalize0_1%255/' + self.comment + '_'
 
 
         if self._functional_gradient is not None:
@@ -733,21 +738,22 @@ class HyperNetwork(Algorithm):
         # import ipdb; ipdb.set_trace()
 
          # Amin's edits    
-         # 
+         
+        if self.Adv_Training:        
+            Adv_data = self.attackk(data, target).to(alf.get_default_device())
 
-        N, C, W, H = data.shape
+            data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
+            target = torch.cat((target, target),0).to(alf.get_default_device())
+
+            shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
+            shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
+            data = data[shuffle_idx]
+            target = target[shuffle_idx]
+            output, _ = self._param_net(data)  # [B, P, D]
         
-        Adv_data = self.attackk(data, target).to(alf.get_default_device())
-
-        data = torch.cat((data[:N//2,:,:,:],Adv_data),0).to(alf.get_default_device())
-        target = torch.cat((target[:N//2], target),0).to(alf.get_default_device())
-
-        # shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
-        # shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
-        # data = data[shuffle_idx]
-        # target = target[shuffle_idx]
-
-        output, _ = self._param_net(data)  # [B, P, D]
+        else:
+            output, _ = self._param_net(data)  # [B, P, D]
+            
         target = target.unsqueeze(1).expand(*target.shape[:1], num_particles,
                                             *target.shape[1:])
         return self._loss_func(output, target)
@@ -770,39 +776,7 @@ class HyperNetwork(Algorithm):
             self._generator.train()
         
         
-        # for name, param in self._param_net._conv_net.named_buffers():
-        #     if 'mean' in name:
-        #         param.data = torch.abs(param.data * 0)
-        #     elif 'var' in name:
-        #         param.data = torch.abs(param.data * 0 + 1)
-        #     else:
-        #         param.data = param.data * 0
-
-            
-
-        # if self.use_conv_norm == 'bn':
-        #     for batch_idx, (data, target) in enumerate(self._train_loader):
-        #         data = data.to(alf.get_default_device())
-        #         target = target.to(alf.get_default_device())
-        #         # Adv_data = self.attackk(data, target).to(alf.get_default_device())
-
-        #         # data = torch.cat((data,Adv_data),0).to(alf.get_default_device())
-        #         # target = torch.cat((target, target),0).to(alf.get_default_device())
-
-        #         # shuffle_idx = np.random.choice(data.shape[0], data.shape[0], replace = False)
-        #         # shuffle_idx = torch.from_numpy(shuffle_idx).type(torch.LongTensor)
-        #         # data = data[shuffle_idx]
-        #         # target = target[shuffle_idx]
-                
-        #         output, _ = self._param_net(data)   
-
-        #         if batch_idx ==20:
-        #             break 
-
-        # self.attackk.set_training_mode(model_training= False, batchnorm_training= False)
-
         self._param_net.eval()
-        # with torch.no_grad():
         with record_time("time/test"):
             if self._loss_type == 'classification':
                 test_acc = 0.
@@ -811,12 +785,15 @@ class HyperNetwork(Algorithm):
             for i, (data, target) in enumerate(self._test_loader):
                 data = data.to(alf.get_default_device())
                 target = target.to(alf.get_default_device())
-                # with torch.no_grad():
-                #     output, _ = self._param_net(data)  # [B, N, D]
-                Adv_data = self.attackk(data, target).to(alf.get_default_device())
 
-                with torch.no_grad():
-                    output, _ = self._param_net(Adv_data)  # [B, N, D]
+                if self.Adv_Training:
+                    Adv_data = self.attackk(data, target).to(alf.get_default_device())
+                    with torch.no_grad():
+                        output, _ = self._param_net(Adv_data)  # [B, N, D]
+                else:
+                    with torch.no_grad():
+                        output, _ = self._param_net(data)  # [B, N, D]
+               
                 loss, extra = self._vote(output, target)
                 preds_tensor.append(output)
                 targets_tensor.append(target)
@@ -826,16 +803,7 @@ class HyperNetwork(Algorithm):
                 test_loss += loss.loss #.item()
             self._param_net.train()
 
-
-            # self.attackk.set_training_mode(model_training= True, batchnorm_training= True)
-
-
-            # for name, param in self._param_net._conv_net.named_buffers():
-            #     if 'mean' in name:
-            #         param.data = torch.abs(param.data * 0)
-            #     elif 'var' in name:
-            #         param.data = torch.abs(param.data * 0 + 1)
-
+          
 
             if self._loss_type == 'classification':
                 test_acc /= len(self._test_loader.dataset)
